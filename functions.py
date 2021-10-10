@@ -42,14 +42,14 @@ class ImagePage(ContentPage):
 def Get(url: str, headers=common_headers):
     s = res.Session()
     s.mount('https://', HTTPAdapter(max_retries=Retry(total=5)))
-    resp_get = s.get(url=url, headers=headers, timeout=2)
+    resp_get = s.get(url=url, headers=headers, timeout=(2,10))
     return resp_get.content
 
 
 def GetData(url: str, headers=common_headers):
     s = res.Session()
     s.mount('https://', HTTPAdapter(max_retries=Retry(total=5)))
-    resp_get = s.get(url=url, headers=headers, timeout=2)
+    resp_get = s.get(url=url, headers=headers, timeout=(2,10))
     data = BeautifulSoup(resp_get.content, features='html.parser')
     return data
 

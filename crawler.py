@@ -1,2 +1,2 @@
-from functions import *
-get_ebook(2761)
+from functions import get_ebook
+get_ebook(3014)
