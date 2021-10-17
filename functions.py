@@ -15,7 +15,7 @@ common_headers = {
     }
 
 html_name_match = re.compile('([0-9]+).(htm)')
-img_name_match = re.compile('[0-9]+.(jpg|png)')
+img_name_match = re.compile('[0-9]+.(jpg|png|jpeg)')
 
 
 class ContentPage:
@@ -90,7 +90,7 @@ def GetSinglePicture(idx: int, url: str, title: str):
     data = Get(url)
     pic = epub.EpubImage()
     pic.file_name = title
-    pic.media_type = 'image/'+title[-3:]
+    pic.media_type = 'image/'+img_name_match.match(title).group(1)
     pic.content = data
     return (idx, pic)
 
