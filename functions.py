@@ -2,6 +2,8 @@
 The functions of the new crawler projects
 """
 import re
+import os
+import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests as res
@@ -37,6 +39,15 @@ class ImagePage(ContentPage):
     def __init__(self, href, title, idx, content, imagelist):
         super().__init__(href, title, idx, content)
         self.imagelist = imagelist
+
+def BookTitleList(max_number=0):
+    if not os.path.exists("book_title_list.csv"):
+        start_number = 0
+    else:
+        with open("book_title_list.csv",'r', encoding='utf-8') as f1:
+            csv_reader = pd.read_csv(f1)
+            print(csv_reader)
+    return start_number
 
 
 def Get(url: str, headers=common_headers):
