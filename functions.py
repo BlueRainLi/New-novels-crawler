@@ -42,11 +42,13 @@ class ImagePage(ContentPage):
 
 def BookTitleList(max_number=0):
     if not os.path.exists("book_title_list.csv"):
-        start_number = 0
+        start_number = 1
+        df = pd.DataFrame({'id':[],'Name':[], 'Author':[], 'Status':[]})
     else:
         with open("book_title_list.csv",'r', encoding='utf-8') as f1:
-            csv_reader = pd.read_csv(f1)
-            print(csv_reader)
+            df = pd.read_csv(f1)
+            start_number = df['id'].iloc[-1]+1
+            # df.loc[len(df.index)] = [] 添加一行
     return start_number
 
 
