@@ -4,6 +4,7 @@ The functions of the new crawler projects
 import re
 import os
 import pandas as pd
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests as res
@@ -48,8 +49,33 @@ def BookTitleList(max_number=0):
         with open("book_title_list.csv",'r', encoding='utf-8') as f1:
             df = pd.read_csv(f1)
             start_number = df['id'].iloc[-1]+1
-            # df.loc[len(df.index)] = [] 添加一行
-    return start_number
+            # df.loc[len(df.index)] = [] # 添加一行
+    
+    
+    for i in range(start_number, start_number+max_number):
+        url_base = 'https://www.wenku8.net/novel/{}/{}/'.format(i//1000, i)+'{}'
+        url = url_base.format('index.htm')
+        data = GetData(url)
+        try:
+            title = data.find(id='title').get_text()
+        except:
+            continue
+        author = data.find(id='info').get_text()[3:]
+        check = data.find_all(class_='ccss')[0]
+        check_href = check.contents[0].get('href')
+        check_data = GetData(url_base.format(check_href))
+        if '因版权问题，文库不再提供该小说的阅读！' in check_data.find(id='content').contents:
+            status = 0
+        else:
+            status = 1
+        df.loc[len(df.index)] = [i, title, author, status]
+        print([i, title, author, status])
+
+        time.sleep(1)
+    
+    df.to_csv("book_title_list.csv", index=False, encoding='utf-8')
+    
+    return start_number+max_number-1
 
 
 def Get(url: str, headers=common_headers):
