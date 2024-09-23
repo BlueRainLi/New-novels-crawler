@@ -5,6 +5,7 @@ import re
 import os
 import pandas as pd
 import time
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests as res
@@ -42,16 +43,22 @@ class ImagePage(ContentPage):
         self.imagelist = imagelist
 
 def BookTitleList(max_number=0):
-    if not os.path.exists("book_title_list.csv"):
+    if not os.path.exists("book_title_list.db"):
+        con = sqlite3.connect("book_title_list.db")
+        cur = con.cursor()
+        cur.execute("""CREATE TABLE book
+            (id INTEGER PRIMARY KEY, 
+             title TEXT, 
+             author TEXT,
+             status BOOLEAN);""")
+        con.commit()
         start_number = 1
-        df = pd.DataFrame({'id':[],'Name':[], 'Author':[], 'Status':[]})
     else:
-        with open("book_title_list.csv",'r', encoding='utf-8') as f1:
-            df = pd.read_csv(f1)
-            start_number = df['id'].iloc[-1]+1
-            # df.loc[len(df.index)] = [] # 添加一行
+        con = sqlite3.connect("book_title_list.db")
+        cur = con.cursor()
+        start_number = cur.execute('SELECT max(id) FROM book').fetchone()[0]+1
     
-    
+    res = []
     for i in range(start_number, start_number+max_number):
         url_base = 'https://www.wenku8.net/novel/{}/{}/'.format(i//1000, i)+'{}'
         url = url_base.format('index.htm')
@@ -61,19 +68,25 @@ def BookTitleList(max_number=0):
         except:
             continue
         author = data.find(id='info').get_text()[3:]
-        check = data.find_all(class_='ccss')[0]
+        try:
+            check = data.find_all(class_='ccss')[0]
+        except:
+            print(f"{title} no content.")
+            continue
         check_href = check.contents[0].get('href')
         check_data = GetData(url_base.format(check_href))
         if '因版权问题，文库不再提供该小说的阅读！' in check_data.find(id='content').contents:
             status = 0
         else:
             status = 1
-        df.loc[len(df.index)] = [i, title, author, status]
+        res.append([i, title, author, status])
         print([i, title, author, status])
 
         time.sleep(1)
     
-    df.to_csv("book_title_list.csv", index=False, encoding='utf-8')
+    cur.executemany("INSERT INTO book VALUES(?,?,?,?)", res)
+    con.commit()
+    con.close()
     
     return start_number+max_number-1
 

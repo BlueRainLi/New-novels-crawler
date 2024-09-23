@@ -1,19 +1,21 @@
+import sqlite3
 import pandas as pd
 import ttkbootstrap as ttk
 import ttkbootstrap.constants as ttc
 import ttkbootstrap.tableview as ttb
+from functions import *
 
 col_data = [
     {"text": "Book_id", "stretch": False, "anchor":"center"},
-    {"text":"Name", "anchor": "center"},
-    {"text":"Author", "anchor":"center"},
+    {"text": "Name", "anchor": "center"},
+    {"text": "Author", "anchor":"center"},
     {"text": "Status", "stretch": False, "anchor":"center"}
 ]
 
-data = pd.read_csv("book_title_list.csv")
-row_data = []
-for index, row in data.iterrows():
-    row_data.append((row.iloc[0], row.iloc[1], row.iloc[2], row.iloc[3]))
+con = sqlite3.connect('book_title_list.db')
+cur = con.cursor()
+row_data = cur.execute('select * from book').fetchall()
+con.close()
 
 class tk_build():
     def __init__(self) -> None:

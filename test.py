@@ -1,2 +1,2 @@
 from functions import *
-print(BookTitleList(200))
+print(BookTitleList(50))
