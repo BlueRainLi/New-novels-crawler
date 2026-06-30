@@ -1,0 +1,8 @@
+urllib3
+requests
+ebooklib
+bs4
+pandas
+numpy
+ttkbootstrap
+

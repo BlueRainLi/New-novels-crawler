@@ -1,6 +1,7 @@
 """
 The functions of the new crawler projects
 """
+
 import re
 import os
 import pandas as pd
@@ -9,17 +10,31 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests as res
-from bs4 import BeautifulSoup
+from lxml import html
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 from ebooklib import epub
 
-common_headers = {
-    'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36 Edg/94.0.992.31"
-    }
+common_headers: dict[str, str] = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36 Edg/94.0.992.31"
+}
 
-html_name_match = re.compile('([0-9]+).(htm)')
-img_name_match = re.compile('[0-9]+.(jpg|png|jpeg)')
+html_name_match = re.compile("([0-9]+).(htm)")
+img_name_match = re.compile("[0-9]+.(jpg|png|jpeg)")
+
+
+def re_search(pattern: re.Pattern, text: str) -> re.Match:
+    """Search pattern in text, assert a match exists, then return it."""
+    match = pattern.search(text)
+    assert match is not None, f"Pattern {pattern.pattern!r} not found in {text!r}"
+    return match
+
+
+def re_match(pattern: re.Pattern, text: str) -> re.Match:
+    """Match pattern against text from start, assert a match exists, then return it."""
+    match = pattern.match(text)
+    assert match is not None, f"Pattern {pattern.pattern!r} does not match {text!r}"
+    return match
 
 
 class ContentPage:
@@ -27,9 +42,10 @@ class ContentPage:
     A class represents every pages on the novel menu.
     """
 
-    def __init__(self, href, title, idx, content):
+    def __init__(self, href: str, title: str, idx: int, content: str) -> None:
         self.xhtml = epub.EpubHtml(
-            title=title, file_name=href, media_type='xhtml', content=content)
+            title=title, file_name=href, media_type="xhtml", content=content
+        )
         self.idx = idx
 
 
@@ -38,44 +54,54 @@ class ImagePage(ContentPage):
     A class represents pages containing images.
     """
 
-    def __init__(self, href, title, idx, content, imagelist):
+    def __init__(self, href: str, title: str, idx: int, content: str, imagelist: list[epub.EpubImage]) -> None:
         super().__init__(href, title, idx, content)
         self.imagelist = imagelist
 
-def BookTitleList(max_number=0):
+
+def book_title_list(max_number: int = 0) -> int:
     if not os.path.exists("book_title_list.db"):
         con = sqlite3.connect("book_title_list.db")
         cur = con.cursor()
-        cur.execute("""CREATE TABLE book
+        cur.execute(
+            """CREATE TABLE book
             (id INTEGER PRIMARY KEY, 
              title TEXT, 
              author TEXT,
-             status BOOLEAN);""")
+             status BOOLEAN);"""
+        )
         con.commit()
         start_number = 1
     else:
         con = sqlite3.connect("book_title_list.db")
         cur = con.cursor()
-        start_number = cur.execute('SELECT max(id) FROM book').fetchone()[0]+1
-    
+        start_number = cur.execute("SELECT max(id) FROM book").fetchone()[0] + 1
+
     res = []
-    for i in range(start_number, start_number+max_number):
-        url_base = 'https://www.wenku8.net/novel/{}/{}/'.format(i//1000, i)+'{}'
-        url = url_base.format('index.htm')
-        data = GetData(url)
-        try:
-            title = data.find(id='title').get_text()
-        except:
+    for i in range(start_number, start_number + max_number):
+        url_base = f"https://www.wenku8.net/novel/{i//1000}/{i}/"
+        url = f"{url_base}index.htm"
+        data = get_data(url)
+        title_nodes = data.xpath('//*[@id="title"]/text()')
+        if not title_nodes:
             continue
-        author = data.find(id='info').get_text()[3:]
-        try:
-            check = data.find_all(class_='ccss')[0]
-        except:
+        title = title_nodes[0]
+        info_nodes = data.xpath('//*[@id="info"]/text()')
+        if not info_nodes:
+            continue
+        author = info_nodes[0][3:]
+        ccss = data.cssselect(".ccss")
+        if not ccss:
             print(f"{title} no content.")
             continue
-        check_href = check.contents[0].get('href')
-        check_data = GetData(url_base.format(check_href))
-        if '因版权问题，文库不再提供该小说的阅读！' in check_data.find(id='content').contents:
+        check = ccss[0]
+        check_link = check.cssselect("a")
+        if not check_link:
+            continue
+        check_href = check_link[0].get("href")
+        check_data = get_data(f"{url_base}{check_href}")
+        content_texts = check_data.xpath('//*[@id="content"]/text()')
+        if "因版权问题，文库不再提供该小说的阅读！" in content_texts:
             status = 0
         else:
             status = 1
@@ -83,136 +109,139 @@ def BookTitleList(max_number=0):
         print([i, title, author, status])
 
         time.sleep(1)
-    
+
     cur.executemany("INSERT INTO book VALUES(?,?,?,?)", res)
     con.commit()
     con.close()
-    
-    return start_number+max_number-1
+
+    return start_number + max_number - 1
 
 
-def Get(url: str, headers=common_headers):
+def fetch(url: str, headers: dict[str, str] = common_headers) -> bytes:
     s = res.Session()
-    s.mount('https://', HTTPAdapter(max_retries=Retry(total=5)))
-    resp_get = s.get(url=url, headers=headers, timeout=(2,10))
+    s.mount("https://", HTTPAdapter(max_retries=Retry(total=5)))
+    resp_get = s.get(url=url, headers=headers, timeout=(2, 10))
     return resp_get.content
 
 
-def GetData(url: str, headers=common_headers):
+def get_data(url: str, headers: dict[str, str] = common_headers) -> html.HtmlElement:
     s = res.Session()
-    s.mount('https://', HTTPAdapter(max_retries=Retry(total=5)))
-    resp_get = s.get(url=url, headers=headers, timeout=(2,10))
-    data = BeautifulSoup(resp_get.content, features='html.parser')
+    s.mount("https://", HTTPAdapter(max_retries=Retry(total=5)))
+    resp_get = s.get(url=url, headers=headers, timeout=(2, 10))
+    data = html.fromstring(resp_get.content)
     return data
 
 
-def FormMenu(data: BeautifulSoup) -> dict:
-    """
-    Use the list of volumes and chapters to form the menu list
-    :param data: list of volumes and chapters
-    :return: list
-    """
-    data = data.find_all(class_=['vcss', 'ccss'])
+def form_menu(data: html.HtmlElement) -> dict[str, list]:
+    items = data.cssselect(".vcss, .ccss")
     res = dict()
     idx = None
-    for item in data:
-        if item.get('class') == ['vcss']:
-            idx = item.get_text()
+    for item in items:
+        classes = item.get("class")
+        if classes is not None and "vcss" in classes.split():
+            idx = item.text_content()
             res[idx] = []
-        elif item.get('class') == ['ccss']:
-            if idx == None:
+        elif classes is not None and "ccss" in classes.split():
+            if idx is None:
                 print(res)
-                raise ValueError(
-                    "The first item of the list is not the volume")
-            if item.get_text() != '\xa0':
-                res[idx].append(item.contents[0])
+                raise ValueError("The first item of the list is not the volume")
+            if item.text_content() != "\xa0":
+                chapter_link = item.cssselect("a")[0]
+                res[idx].append(chapter_link)
     return res
 
 
-def GetContent(idx: int, url: str, title: str):
-    data = GetData(url)
-    data = str(data.find(id='content'))
-    data = data.replace('\xa0\xa0\xa0\xa0', '\xa0\xa0')
-    data = data.replace('\xa0\xa0\xa0', '\xa0\xa0')
-    data = data[78:len(data)-6]
-    return ContentPage(html_name_match.search(url).group(1)+'.xhtml', title, idx, data)
+def get_content_with_images(idx: int, url: str, title: str) -> ContentPage:
+    href = f"{re_search(html_name_match, url).group(1)}.xhtml"
+    data = get_data(url)
+    content_tags = data.xpath('//*[@id="content"]')
+    if not content_tags:
+        raise ValueError(f"Content not found in {url!r}")
+    content_tag = content_tags[0]
+
+    # 查找 #content 内的所有图片
+    images = content_tag.cssselect("img")
+
+    if images:
+        # --- 含图片的章节（文字+图片混合）---
+        # 将图片 src 从完整 URL 改为仅文件名（EPUB 内嵌资源引用用）
+        img_infos = []
+        for img in images:
+            src = img.get("src")
+            filename = re_search(img_name_match, src).group()
+            img.set("src", filename)
+            img_infos.append((src, filename))
+
+        # 保留完整的 HTML 结构（文字 + 图片引用）
+        html_str = str(html.tostring(content_tag, encoding="unicode"))
+        html_str = html_str.replace("\xa0\xa0\xa0\xa0", "\xa0\xa0")
+        html_str = html_str.replace("\xa0\xa0\xa0", "\xa0\xa0")
+        content = html_str[78 : len(html_str) - 6]
+
+        # 并发下载图片
+        res = [epub.EpubImage()] * len(img_infos)
+        with ThreadPoolExecutor(max_workers=min(len(img_infos), 20)) as t:
+            obj_list = []
+            for idx_i, (src, filename) in enumerate(img_infos):
+                obj = t.submit(get_single_picture, idx_i, src, filename)
+                obj_list.append(obj)
+            for future in as_completed(obj_list):
+                res_tmp = future.result()
+                res[res_tmp[0]] = res_tmp[1]
+
+        return ImagePage(href, title, idx, content, res)
+    else:
+        # --- 纯文字章节 ---
+        html_str = str(html.tostring(content_tag, encoding="unicode"))
+        html_str = html_str.replace("\xa0\xa0\xa0\xa0", "\xa0\xa0")
+        html_str = html_str.replace("\xa0\xa0\xa0", "\xa0\xa0")
+        content = html_str[78 : len(html_str) - 6]
+        return ContentPage(href, title, idx, content)
 
 
-def GetSinglePicture(idx: int, url: str, title: str):
-    data = Get(url)
+def get_single_picture(idx: int, url: str, title: str) -> tuple[int, epub.EpubImage]:
+    data = fetch(url)
     pic = epub.EpubImage()
     pic.file_name = title
-    pic.media_type = 'image/'+img_name_match.match(title).group(1)
+    pic.media_type = f"image/{re_match(img_name_match, title).group(1)}"
     pic.content = data
     return (idx, pic)
 
 
-def GetPictures(idx0: int, url: str, title: str):
-    href = html_name_match.search(url).group()
-    data = GetData(url)
-    data = data.find_all(class_='imagecontent')
-    data = list(map(lambda x: x.get('src'), data))
-    lens = len(data)
-    res = [0] * lens
 
-    content = "\n<br>\n".join(list(
-        map(lambda x: '<img src="{}">'.format(img_name_match.search(x).group()), data)))
-
-    with ThreadPoolExecutor(max_workers=lens) as t:
-        obj_list = []
-        for idx, item in enumerate(data):
-            img_title = img_name_match.search(item).group()
-            obj = t.submit(GetSinglePicture, idx, item, img_title)
-            obj_list.append(obj)
-
-        for future in as_completed(obj_list):
-            res_tmp = future.result()
-            res[res_tmp[0]] = res_tmp[1]
-
-    result = ImagePage(href, title, idx0, content, res)
-
-    return result
-
-
-def book_init(title: str, author: str):
+def book_init(title: str, author: str) -> epub.EpubBook:
     book = epub.EpubBook()
-    book.set_identifier('BlueRain77')
+    book.set_identifier("BlueRain77")
     book.set_title(title)
     book.add_author(author)
-    book.set_language('zh')
+    book.set_language("zh")
 
     return book
 
 
-def get_ebook(id: int, headers=common_headers):
+def get_ebook(id: int, headers: dict[str, str] = common_headers) -> None:
     """
     Main function of getting ebook.
     """
-    url_base = 'https://www.wenku8.net/novel/{}/{}/'.format(id//1000, id)+'{}'
-    url_cover = "https://img.wenku8.com/image/{}/{}/{}s.jpg".format(id//1000, id, id)
+    url_base = f"https://www.wenku8.net/novel/{id//1000}/{id}/"
+    url_cover = f"https://img.wenku8.com/image/{id//1000}/{id}/{id}s.jpg"
 
-    data = GetData(url_base.format('index.htm'))
-
-    menu = FormMenu(data)
+    data = get_data(f"{url_base}index.htm")
+    menu = form_menu(data)
 
     menu_res = {}
+    chapter_count = sum(len(v) for v in menu.values())
+    chapter_done = 0
     for key in menu.keys():
-        lens = len(menu[key])
-        res_list = [0]*lens
-        with ThreadPoolExecutor(max_workers=lens) as t:
-            obj_list = []
-            for idx, item in enumerate(menu[key]):
-                url_loc = url_base.format(item.get('href'))
-                if item.get_text() == '插图':
-                    obj = t.submit(GetPictures, idx, url_loc, item.get_text())
-                else:
-                    obj = t.submit(GetContent, idx, url_loc, item.get_text())
-                obj_list.append(obj)
-
-            for future in as_completed(obj_list):
-                res = future.result()
-                res_list[res.idx] = res
-
+        res_list = []
+        for idx, item in enumerate(menu[key]):
+            chapter_done += 1
+            title = item.text_content()
+            print(f"[{chapter_done}/{chapter_count}] {key} - {title}")
+            url_loc = f'{url_base}{item.get("href")}'
+            chapter = get_content_with_images(idx, url_loc, title)
+            res_list.append(chapter)
+            time.sleep(5)
         menu_res[key] = res_list
 
     toc = []
@@ -227,10 +256,11 @@ def get_ebook(id: int, headers=common_headers):
             section_list[1].append(item.xhtml)
         toc.append(section_list)
 
-    book = book_init(data.find(id='title').get_text(),
-                     data.find(id='info').get_text()[3:])
+    book_title = data.xpath('string(//*[@id="title"])')
+    book_author = data.xpath('string(//*[@id="info"])')[3:]
+    book = book_init(book_title, book_author)
     book.toc = toc
-    book.spine = ['cover','nav']
+    book.spine = ["cover", "nav"]
     for i in toc:
         for j in i[1]:
             book.add_item(j)
@@ -239,7 +269,7 @@ def get_ebook(id: int, headers=common_headers):
         book.add_item(i)
     book.add_item(epub.EpubNav())
     book.add_item(epub.EpubNcx())
-    cover_file = Get(url_cover)
-    book.set_cover('cover.jpg', cover_file, create_page=False)
+    cover_file = fetch(url_cover)
+    book.set_cover("cover.jpg", cover_file, create_page=False)
 
-    epub.write_epub(data.find(id='title').get_text()+'.epub', book)
+    epub.write_epub(f"{book_title}.epub", book)
