@@ -4,19 +4,16 @@ The functions of the new crawler projects
 
 import re
 import os
-import pandas as pd
 import time
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import requests as res
+from curl_cffi import requests as res
 from lxml import html
-from requests.adapters import HTTPAdapter
-from urllib3.util import Retry
 from ebooklib import epub
 
 common_headers: dict[str, str] = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36 Edg/94.0.992.31"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
 }
 
 html_name_match = re.compile("([0-9]+).(htm)")
@@ -60,22 +57,21 @@ class ImagePage(ContentPage):
 
 
 def book_title_list(max_number: int = 0) -> int:
-    if not os.path.exists("book_title_list.db"):
-        con = sqlite3.connect("book_title_list.db")
-        cur = con.cursor()
-        cur.execute(
-            """CREATE TABLE book
-            (id INTEGER PRIMARY KEY, 
-             title TEXT, 
-             author TEXT,
-             status BOOLEAN);"""
-        )
-        con.commit()
-        start_number = 1
-    else:
-        con = sqlite3.connect("book_title_list.db")
-        cur = con.cursor()
-        start_number = cur.execute("SELECT max(id) FROM book").fetchone()[0] + 1
+    con = sqlite3.connect("book_title_list.db")
+    cur = con.cursor()
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS book
+        (id INTEGER PRIMARY KEY, 
+         title TEXT, 
+         author TEXT,
+         status BOOLEAN);"""
+    )
+    con.commit()
+    start_number = (cur.execute("SELECT max(id) FROM book").fetchone()[0] or 0) + 1
+
+    def mark_empty(book_id: int) -> None:
+        """打印一条"空"记录，标记该编号没有找到可入库的信息。"""
+        print([book_id, "空", "", 0])
 
     res = []
     for i in range(start_number, start_number + max_number):
@@ -84,10 +80,12 @@ def book_title_list(max_number: int = 0) -> int:
         data = get_data(url)
         title_nodes = data.xpath('//*[@id="title"]/text()')
         if not title_nodes:
+            mark_empty(i)
             continue
         title = title_nodes[0]
         info_nodes = data.xpath('//*[@id="info"]/text()')
         if not info_nodes:
+            mark_empty(i)
             continue
         author = info_nodes[0][3:]
         ccss = data.cssselect(".ccss")
@@ -97,18 +95,20 @@ def book_title_list(max_number: int = 0) -> int:
         check = ccss[0]
         check_link = check.cssselect("a")
         if not check_link:
+            mark_empty(i)
             continue
         check_href = check_link[0].get("href")
         check_data = get_data(f"{url_base}{check_href}")
         content_texts = check_data.xpath('//*[@id="content"]/text()')
-        if "因版权问题，文库不再提供该小说的阅读！" in content_texts:
+        copyright_msg = "因版权问题，文库不再提供该小说的阅读！"
+        if any(copyright_msg in t for t in content_texts):
             status = 0
         else:
             status = 1
         res.append([i, title, author, status])
         print([i, title, author, status])
 
-        time.sleep(1)
+        time.sleep(5)
 
     cur.executemany("INSERT INTO book VALUES(?,?,?,?)", res)
     con.commit()
@@ -117,19 +117,24 @@ def book_title_list(max_number: int = 0) -> int:
     return start_number + max_number - 1
 
 
+def _get_response(url: str, headers: dict[str, str], max_retries: int = 5) -> res.Response:
+    """请求 URL 并返回响应；模拟 Chrome 的 TLS 指纹以绕过 Cloudflare 拦截。"""
+    for attempt in range(max_retries):
+        try:
+            with res.Session(impersonate="chrome") as s:
+                return s.get(url=url, headers=headers, timeout=(2, 10))
+        except Exception:
+            if attempt == max_retries - 1:
+                raise
+    raise RuntimeError("unreachable")
+
+
 def fetch(url: str, headers: dict[str, str] = common_headers) -> bytes:
-    s = res.Session()
-    s.mount("https://", HTTPAdapter(max_retries=Retry(total=5)))
-    resp_get = s.get(url=url, headers=headers, timeout=(2, 10))
-    return resp_get.content
+    return _get_response(url, headers).content
 
 
 def get_data(url: str, headers: dict[str, str] = common_headers) -> html.HtmlElement:
-    s = res.Session()
-    s.mount("https://", HTTPAdapter(max_retries=Retry(total=5)))
-    resp_get = s.get(url=url, headers=headers, timeout=(2, 10))
-    data = html.fromstring(resp_get.content)
-    return data
+    return html.fromstring(_get_response(url, headers).content)
 
 
 def form_menu(data: html.HtmlElement) -> dict[str, list]:
@@ -219,10 +224,16 @@ def book_init(title: str, author: str) -> epub.EpubBook:
     return book
 
 
-def get_ebook(id: int, headers: dict[str, str] = common_headers) -> None:
+def get_ebook(id: int, headers: dict[str, str] = common_headers, output_dir: str = "epub_output") -> None:
     """
     Main function of getting ebook.
+
+    Args:
+        id: Book ID on wenku8.
+        headers: HTTP request headers.
+        output_dir: Relative path to store the generated EPUB file. Defaults to "epub_output".
     """
+    os.makedirs(output_dir, exist_ok=True)
     url_base = f"https://www.wenku8.net/novel/{id//1000}/{id}/"
     url_cover = f"https://img.wenku8.com/image/{id//1000}/{id}/{id}s.jpg"
 
@@ -272,4 +283,5 @@ def get_ebook(id: int, headers: dict[str, str] = common_headers) -> None:
     cover_file = fetch(url_cover)
     book.set_cover("cover.jpg", cover_file, create_page=False)
 
-    epub.write_epub(f"{book_title}.epub", book)
+    safe_title = re.sub(r'[\\/:*?"<>|]', "_", book_title).strip() or "book"
+    epub.write_epub(os.path.join(output_dir, f"{safe_title}.epub"), book)
