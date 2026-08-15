@@ -1,3 +1,12 @@
 /.venv/
 /__pycache__/
+/epub_output/
+/dist/
+.vscode/
 *.epub
+*.exe
+*.log
+*.txt
+*.xml
+*.htm
+*.html
