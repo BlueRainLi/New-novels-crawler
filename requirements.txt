@@ -1,8 +1,5 @@
-urllib3
-requests
+curl_cffi
 ebooklib
-bs4
-pandas
-numpy
+PySide6
 ttkbootstrap
 

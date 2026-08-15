@@ -7,6 +7,7 @@ import re
 import sqlite3
 import sys
 import tkinter.font as tkfont
+import tkinter as tk
 import traceback
 import threading
 import webbrowser
@@ -165,6 +166,9 @@ class tk_build:
 
         # 统一放大界面字体，行高和列宽随字体自适应
         self.font = tkfont.Font(family=FONT_FAMILY, size=FONT_SIZE)
+        # 尽早设置 Tk 默认字体，确保搜索框等控件创建时就使用正确字体
+        tkfont.nametofont("TkDefaultFont").configure(family=FONT_FAMILY, size=FONT_SIZE)
+        self.root.style.configure("TEntry", font=(FONT_FAMILY, FONT_SIZE))
         self.col_data = build_col_data(self.font)
 
         # 配置网格布局权重
@@ -226,29 +230,14 @@ class tk_build:
         self.control_frame.grid(
             row=1, column=0, padx=5, pady=5, sticky="ew", columnspan=10
         )
-        self.control_frame.grid_columnconfigure(1, weight=1)
-        self.control_frame.grid_columnconfigure(3, weight=1)
+        # 第 5 列（按钮与延迟之间的空白列）占据剩余空间，把延迟推到右侧
+        self.control_frame.grid_columnconfigure(5, weight=1)
 
-        self.book_id_label = ttk.Label(self.control_frame, text="书号：")
-        self.book_id_label.grid(row=0, column=0, padx=5, pady=5, sticky="e")
-        self.book_id_value = ttk.IntVar()
-        self.book_id_entry = ttk.Entry(
-            self.control_frame, textvariable=self.book_id_value, width=12
-        )
-        self.book_id_entry.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-
-        self.book_name_label = ttk.Label(self.control_frame, text="书名：")
-        self.book_name_label.grid(row=0, column=2, padx=5, pady=5, sticky="e")
-        self.book_name_value = ttk.StringVar()
-        self.book_name_entry = ttk.Entry(
-            self.control_frame, textvariable=self.book_name_value, state="readonly"
-        )
-        self.book_name_entry.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
-
+        # ---- 第一行：按钮（左对齐） ----
         self.refresh_btn = ttk.Button(
             self.control_frame, text="刷新", bootstyle=ttc.PRIMARY, command=self.refresh
         )
-        self.refresh_btn.grid(row=0, column=4, padx=5, pady=5)
+        self.refresh_btn.grid(row=0, column=0, padx=5, pady=5)
 
         self.scan_btn = ttk.Button(
             self.control_frame,
@@ -256,12 +245,12 @@ class tk_build:
             bootstyle=ttc.INFO,
             command=self.scan_new_books,
         )
-        self.scan_btn.grid(row=0, column=5, padx=5, pady=5)
+        self.scan_btn.grid(row=0, column=1, padx=5, pady=5)
 
         self.crawl_btn = ttk.Button(
             self.control_frame, text="抓取", bootstyle=ttc.SUCCESS, command=self.crawl
         )
-        self.crawl_btn.grid(row=0, column=6, padx=5, pady=5)
+        self.crawl_btn.grid(row=0, column=2, padx=5, pady=5)
 
         self.clear_btn = ttk.Button(
             self.control_frame,
@@ -269,7 +258,7 @@ class tk_build:
             bootstyle=ttc.DANGER,
             command=self.clear,
         )
-        self.clear_btn.grid(row=0, column=7, padx=5, pady=5)
+        self.clear_btn.grid(row=0, column=3, padx=5, pady=5)
 
         self.theme_btn = ttk.Button(
             self.control_frame,
@@ -277,19 +266,52 @@ class tk_build:
             bootstyle=ttc.SECONDARY,
             command=self.toggle_theme,
         )
-        self.theme_btn.grid(row=0, column=8, padx=5, pady=5)
+        self.theme_btn.grid(row=0, column=4, padx=5, pady=5)
+
+        # ---- 第一行右侧：自定义延迟（右对齐） ----
+        self.delay_label = ttk.Label(self.control_frame, text="延迟(秒)：")
+        self.delay_label.grid(row=0, column=6, padx=(15, 5), pady=5, sticky="e")
+        self.delay_value = ttk.DoubleVar(value=5.0)
+        self.delay_entry = tk.Entry(
+            self.control_frame, textvariable=self.delay_value, width=6,
+            font=self.font,
+        )
+        self.delay_entry.grid(row=0, column=7, padx=5, pady=5, ipadx=4, sticky="w")
+
+        # ---- 第二行：书号 + 书名 ----
+        self.book_id_label = ttk.Label(self.control_frame, text="书号：")
+        self.book_id_label.grid(row=1, column=0, padx=5, pady=5, sticky="e")
+        self.book_id_value = ttk.IntVar()
+        self.book_id_entry = tk.Entry(
+            self.control_frame, textvariable=self.book_id_value, width=8,
+            font=self.font,
+        )
+        self.book_id_entry.grid(row=1, column=1, padx=5, pady=5, ipadx=4, sticky="w")
+
+        self.book_name_label = ttk.Label(self.control_frame, text="书名：")
+        self.book_name_label.grid(row=1, column=2, padx=5, pady=5, sticky="e")
+        self.book_name_value = ttk.StringVar()
+        self.book_name_entry = tk.Entry(
+            self.control_frame, textvariable=self.book_name_value, state="readonly",
+            font=self.font,
+        )
+        self.book_name_entry.grid(row=1, column=3, padx=5, pady=5, ipadx=4, sticky="ew", columnspan=6)
 
         self.volume_nodes = {}
         self._last_log_iid = None
         self.task_running = False
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._configure_styles()
+        self._apply_entry_colors()
+        self._fix_search_entry_font()
 
     # ---------- 样式 ----------
 
     def _configure_styles(self):
         """配置字体/行高/表格样式；切换主题后 ttk 会重建样式，需重新调用。"""
         rowheight = self.font.metrics("linespace") + 8
+        # 设置 Tk 默认字体，确保所有输入框（含 Tableview 搜索框）字体一致
+        tkfont.nametofont("TkDefaultFont").configure(family=FONT_FAMILY, size=FONT_SIZE)
         self.root.style.configure(".", font=(FONT_FAMILY, FONT_SIZE))
         self.root.style.configure(
             "Treeview",
@@ -309,7 +331,6 @@ class tk_build:
             font=(FONT_FAMILY, FONT_SIZE),
             padding=4,
         )
-        self.root.after(50, self._align_entry_height)
 
         # Tableview 内部 Treeview 的样式名，兜底统一用 "Table.Treeview"
         table_style = str(self.nb_tab1_table.view.cget("style")) or "Table.Treeview"
@@ -324,31 +345,46 @@ class tk_build:
                 font=(FONT_FAMILY, FONT_SIZE, "bold"),
             )
 
-    def _align_entry_height(self):
-        """实测输入框与按钮的高度差，反向调整 TEntry 内边距，让两者同高。"""
-        try:
-            for _ in range(3):
-                self.root.update_idletasks()
-                btn_h = self.refresh_btn.winfo_height()
-                entry_h = self.book_id_entry.winfo_height()
-                if btn_h <= 1 or entry_h <= 1:
-                    self.root.after(50, self._align_entry_height)
-                    return
-                delta = (btn_h - entry_h + 1) // 2
-                if not delta:
-                    return
-                pad = list(self.root.style.lookup("TEntry", "padding") or (4, 4))
-                if len(pad) == 1:
-                    pad = [pad[0], pad[0], pad[0], pad[0]]
-                elif len(pad) == 2:
-                    pad = [pad[0], pad[1], pad[0], pad[1]]
-                else:
-                    pad = list(pad[:4])
-                pad[1] = max(0, pad[1] + delta)
-                pad[3] = max(0, pad[3] + delta)
-                self.root.style.configure("TEntry", padding=tuple(pad))
-        except Exception:
-            return
+    def _apply_entry_colors(self):
+        """根据当前主题更新 tk.Entry 颜色，确保暗色模式下可读。"""
+        fg = self.colors.inputfg
+        bg = self.colors.inputbg
+        border = self.colors.selectbg if self.theme_dark else self.colors.border
+        for entry in (self.book_id_entry, self.delay_entry, self.book_name_entry):
+            entry.configure(
+                foreground=fg,
+                background=bg,
+                insertbackground=fg,
+                disabledbackground=bg,
+                disabledforeground=fg,
+                readonlybackground=bg,
+                relief=tk.FLAT,
+                highlightthickness=1,
+                highlightbackground=border,
+                highlightcolor=self.colors.primary,
+            )
+
+    def _fix_search_entry_font(self):
+        """找到 Tableview 搜索框的 ttk.Entry，用自定义样式确保字体一致。"""
+        # 创建自定义样式（切换主题后 ttk 会重置，每次调用都重新配置）
+        self.root.style.configure(
+            "Search.TEntry",
+            font=(FONT_FAMILY, FONT_SIZE),
+        )
+        # 递归遍历 Tableview 所有子控件，找到所有 ttk.Entry
+        def _find_entries(widget):
+            found = []
+            for child in widget.winfo_children():
+                if child.winfo_class() == "TEntry":
+                    found.append(child)
+                found.extend(_find_entries(child))
+            return found
+
+        for entry in _find_entries(self.nb_tab1_table):
+            try:
+                entry.configure(style="Search.TEntry")
+            except Exception:
+                pass
 
     def toggle_theme(self):
         """在浅色/深色主题之间切换。"""
@@ -360,6 +396,8 @@ class tk_build:
         self.root.style.theme_use(DARK_THEME if dark else LIGHT_THEME)
         self.colors = self.root.style.colors
         self._configure_styles()
+        self._apply_entry_colors()
+        self._fix_search_entry_font()
         stripe = self.colors.dark if dark else self.colors.light
         self.nb_tab1_table.apply_table_stripes((stripe, None))
         self.theme_btn.configure(text="切换浅色" if dark else "切换深色")
@@ -414,6 +452,10 @@ class tk_build:
         if book_id <= 0:
             Messagebox.show_warning("请先输入有效的书号。", "小说爬虫")
             return
+        try:
+            delay = self.delay_value.get()
+        except Exception:
+            delay = 5.0
         self.crawl_btn.configure(text="抓取中...")
 
         def on_done():
@@ -421,7 +463,7 @@ class tk_build:
                 "爬取完成！EPUB 已保存到 epub_output 目录。", "小说爬虫"
             )
 
-        self.run_background(lambda: get_ebook(book_id), on_done)
+        self.run_background(lambda: get_ebook(book_id, crawl_delay=delay), on_done)
 
     def scan_new_books(self):
         count = Querybox.get_integer(
@@ -433,13 +475,17 @@ class tk_build:
         )
         if count is None or count <= 0:
             return
+        try:
+            delay = self.delay_value.get()
+        except Exception:
+            delay = 5.0
         self.scan_btn.configure(text="扫描中...")
 
         def on_done():
             self.refresh()
             Messagebox.show_info("扫描完成，书本列表已刷新。", "小说爬虫")
 
-        self.run_background(lambda: book_title_list(count), on_done)
+        self.run_background(lambda: book_title_list(count, crawl_delay=delay), on_done)
 
     def clear(self):
         """清空表单与日志树，重置表格选中和搜索过滤（不删除数据库数据）。"""

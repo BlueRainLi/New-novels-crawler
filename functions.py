@@ -56,7 +56,7 @@ class ImagePage(ContentPage):
         self.imagelist = imagelist
 
 
-def book_title_list(max_number: int = 0) -> int:
+def book_title_list(max_number: int = 0, crawl_delay: float = 5) -> int:
     con = sqlite3.connect("book_title_list.db")
     cur = con.cursor()
     cur.execute(
@@ -108,7 +108,7 @@ def book_title_list(max_number: int = 0) -> int:
         res.append([i, title, author, status])
         print([i, title, author, status])
 
-        time.sleep(5)
+        time.sleep(crawl_delay)
 
     cur.executemany("INSERT INTO book VALUES(?,?,?,?)", res)
     con.commit()
@@ -133,8 +133,46 @@ def fetch(url: str, headers: dict[str, str] = common_headers) -> bytes:
     return _get_response(url, headers).content
 
 
+def _decode_response(resp: res.Response) -> str:
+    """将响应字节按正确编码解码为文本。
+
+    wenku8 页面是 GBK 编码，但 lxml 直接按字节解析时可能误判编码，
+    导致 "encoding error: input conversion failed" 报错。这里优先使用
+    Content-Type 头或 HTML meta 声明的 charset；严格解码失败时按
+    UTF-8 -> GBK 做容错解码，并选替换字符最少的结果（页面偶发的
+    非法字节如 0xFE 0x82 会变成 U+FFFD，不影响整体解析）。
+    """
+    content = resp.content
+    encodings = []
+    if resp.charset_encoding:
+        encodings.append(resp.charset_encoding)
+    head = content[:8192].decode("ascii", errors="ignore")
+    m = re.search(r'charset\s*=\s*["\']?([\w-]+)', head, re.I)
+    if m:
+        encodings.append(m.group(1))
+    encodings += ["utf-8", "gbk"]
+
+    # 1) 严格解码：能完整解码的编码直接用
+    for enc in dict.fromkeys(encodings):
+        try:
+            return content.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+
+    # 2) 容错解码：选替换字符最少的编码，坏字节变成 U+FFFD
+    best = None
+    for enc in dict.fromkeys(encodings):
+        try:
+            decoded = content.decode(enc, errors="replace")
+        except LookupError:
+            continue
+        if best is None or decoded.count("\ufffd") < best.count("\ufffd"):
+            best = decoded
+    return best if best is not None else content.decode("utf-8", errors="replace")
+
+
 def get_data(url: str, headers: dict[str, str] = common_headers) -> html.HtmlElement:
-    return html.fromstring(_get_response(url, headers).content)
+    return html.fromstring(_decode_response(_get_response(url, headers)))
 
 
 def form_menu(data: html.HtmlElement) -> dict[str, list]:
@@ -224,7 +262,7 @@ def book_init(title: str, author: str) -> epub.EpubBook:
     return book
 
 
-def get_ebook(id: int, headers: dict[str, str] = common_headers, output_dir: str = "epub_output") -> None:
+def get_ebook(id: int, headers: dict[str, str] = common_headers, output_dir: str = "epub_output", crawl_delay: float = 5) -> None:
     """
     Main function of getting ebook.
 
@@ -252,7 +290,7 @@ def get_ebook(id: int, headers: dict[str, str] = common_headers, output_dir: str
             url_loc = f'{url_base}{item.get("href")}'
             chapter = get_content_with_images(idx, url_loc, title)
             res_list.append(chapter)
-            time.sleep(5)
+            time.sleep(crawl_delay)
         menu_res[key] = res_list
 
     toc = []
