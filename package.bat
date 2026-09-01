@@ -33,6 +33,17 @@ if %ERRORLEVEL% neq 0 (
     )
 )
 
+REM zstandard is required for Nuitka onefile compression. Without it the
+REM payload stays uncompressed and the .exe ends up ~2x larger.
+python -c "import zstandard" 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo [INFO] installing zstandard ^(for onefile compression^) ...
+    pip install zstandard -q
+    if !ERRORLEVEL! neq 0 (
+        echo [WARN] zstandard install failed, onefile will NOT be compressed
+    )
+)
+
 if not exist "%MAIN_SCRIPT%" (
     echo [ERROR] %MAIN_SCRIPT% not found
     pause
@@ -88,6 +99,23 @@ REM NOTE: --windows-console-mode=disable is intentionally NOT passed,
 REM so the .exe keeps a console window (handy for debugging).
 REM To hide the console instead, add the option to the command below.
 
+REM Size trimming notes (see package.bat.bak for the untrimmed original):
+REM   - "ebooklib.plugins" is what dragged in pygments (~20MB, 323 modules).
+REM     ebooklib never imports its own plugins package; plugins are passed in
+REM     via options["plugins"], so both are dead weight here.
+REM   - Pillow is pulled in by ttkbootstrap. Nuitka reads PIL.Image._plugins and
+REM     force-includes every plugin as an implicit import, which is where the
+REM     7.6MB _avif.pyd comes from. Must use --nofollow-import-to here, because
+REM     --noinclude-dlls is NOT applied to extension modules (see
+REM     nuitka/freezer/IncludedEntryPoints.py: addExtensionModuleEntryPoint
+REM     appends straight to standalone_entry_points and skips the filter).
+REM     Verified --noinclude-dlls=*_avif* has no effect on it.
+REM   - Do NOT exclude PIL._imagingft (2.1MB): ttkbootstrap/style.py calls
+REM     ImageFont.truetype() at line ~4438, which needs it.
+REM   - Do NOT exclude curl_cffi.requests.websockets or curl_cffi.aio: both are
+REM     imported at module level by curl_cffi/__init__.py, so excluding them
+REM     makes the import fail at runtime.
+
 python -m nuitka ^
     %MODE_ARGS% ^
     %PLUGIN_ARGS% ^
@@ -100,7 +128,14 @@ python -m nuitka ^
     --show-progress ^
     --follow-imports ^
     --include-package=curl_cffi ^
-    --include-package=ebooklib ^
+    --nofollow-import-to=ebooklib.plugins ^
+    --nofollow-import-to=pygments ^
+    --nofollow-import-to=PIL._avif ^
+    --nofollow-import-to=PIL._imagingcms ^
+    --nofollow-import-to=PIL._webp ^
+    --nofollow-import-to=lxml.objectify ^
+    --nofollow-import-to=IPython ^
+    --nofollow-import-to=debugpy ^
     --nofollow-import-to=tkinter.test ^
     --nofollow-import-to=pytest ^
     --nofollow-import-to=unittest ^

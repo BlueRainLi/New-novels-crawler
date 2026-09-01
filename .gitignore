@@ -2,7 +2,9 @@
 /__pycache__/
 /epub_output/
 /dist/
-.vscode/
+/.vscode/
+/.workbuddy/
+/.vscode/
 *.epub
 *.exe
 *.log

@@ -2,15 +2,103 @@
 The functions of the new crawler projects
 """
 
-import re
+import json
 import os
+import re
+import sys
+import tempfile
 import time
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 from curl_cffi import requests as res
 from lxml import html
 from ebooklib import epub
+
+# ---------------------------------------------------------------- 路径与配置
+
+CONFIG_NAME = "config.json"
+DEFAULT_DB_NAME = "book_title_list.db"
+DEFAULT_OUTPUT_DIR_NAME = "epub_output"
+
+
+def get_app_dir() -> Path:
+    """返回可执行文件（或源码脚本）所在目录。
+
+    不能用相对路径（如 "book_title_list.db"）：它解析到进程的工作目录，
+    而工作目录取决于启动方式，会静默地把数据写到不同地方。
+
+    Nuitka onefile 模式下 sys.executable 可能指向临时解压目录，因此按顺序
+    尝试：Nuitka 注入的原始 exe 目录 -> 不在临时目录下的 sys.executable /
+    argv[0] -> 兜底 sys.executable。
+    """
+    env_dir = os.environ.get("NUITKA_ONEFILE_DIRECTORY")
+    if env_dir:
+        return Path(env_dir).resolve()
+
+    temp_root = Path(tempfile.gettempdir()).resolve()
+
+    def _in_temp(p: Path) -> bool:
+        try:
+            return temp_root in p.resolve().parents
+        except OSError:
+            return False
+
+    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+        candidates = [Path(sys.executable)]
+        if sys.argv and sys.argv[0]:
+            candidates.append(Path(sys.argv[0]))
+        for c in candidates:
+            if c.is_file() and not _in_temp(c):
+                return c.resolve().parent
+        return Path(sys.executable).resolve().parent
+
+    return Path(__file__).resolve().parent
+
+
+def get_config_path() -> Path:
+    return get_app_dir() / CONFIG_NAME
+
+
+def load_config() -> dict:
+    """读取配置文件；文件缺失或损坏时返回空字典。"""
+    try:
+        with open(get_config_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_config(data: dict) -> None:
+    path = get_config_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+
+
+def get_db_path() -> Path:
+    """当前使用的数据库路径：优先配置值，否则用应用目录下的默认库。"""
+    saved = load_config().get("db_path")
+    return Path(saved) if saved else get_app_dir() / DEFAULT_DB_NAME
+
+
+def set_db_path(path) -> None:
+    """记录用户选择的数据库路径。"""
+    cfg = load_config()
+    cfg["db_path"] = str(Path(path).resolve())
+    save_config(cfg)
+
+
+def get_output_dir() -> Path:
+    """EPUB 输出目录：优先配置值，否则用应用目录下的 epub_output。"""
+    saved = load_config().get("output_dir")
+    return Path(saved) if saved else get_app_dir() / DEFAULT_OUTPUT_DIR_NAME
+
 
 common_headers: dict[str, str] = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
@@ -56,8 +144,8 @@ class ImagePage(ContentPage):
         self.imagelist = imagelist
 
 
-def book_title_list(max_number: int = 0, crawl_delay: float = 5) -> int:
-    con = sqlite3.connect("book_title_list.db")
+def book_title_list(max_number: int = 0, crawl_delay: float = 5, db_path=None) -> int:
+    con = sqlite3.connect(str(db_path or get_db_path()))
     cur = con.cursor()
     cur.execute(
         """CREATE TABLE IF NOT EXISTS book
@@ -262,15 +350,18 @@ def book_init(title: str, author: str) -> epub.EpubBook:
     return book
 
 
-def get_ebook(id: int, headers: dict[str, str] = common_headers, output_dir: str = "epub_output", crawl_delay: float = 5) -> None:
+def get_ebook(id: int, headers: dict[str, str] = common_headers, output_dir=None, crawl_delay: float = 5) -> None:
     """
     Main function of getting ebook.
 
     Args:
         id: Book ID on wenku8.
         headers: HTTP request headers.
-        output_dir: Relative path to store the generated EPUB file. Defaults to "epub_output".
+        output_dir: Directory to store the generated EPUB file. Defaults to the
+            "epub_output" folder next to the executable / script.
+        crawl_delay: Seconds to wait between chapter requests.
     """
+    output_dir = str(output_dir or get_output_dir())
     os.makedirs(output_dir, exist_ok=True)
     url_base = f"https://www.wenku8.net/novel/{id//1000}/{id}/"
     url_cover = f"https://img.wenku8.com/image/{id//1000}/{id}/{id}s.jpg"
